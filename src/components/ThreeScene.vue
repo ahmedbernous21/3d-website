@@ -3,11 +3,14 @@
   </template>
   
   <script setup>
-  import { onMounted, onBeforeUnmount, ref } from 'vue';
+import { onMounted, onBeforeUnmount, ref } from 'vue';
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-  
+
+  // Bundled asset URL – works in prod (avoids SPA fallback returning HTML for /models/...)
+  import modelUrl from '../assets/models/3dmodel.glb?url';
+
   const container = ref(null);
   
   let scene, camera, renderer, controls, animationId;
@@ -38,10 +41,10 @@
   
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
-  
+
 	const loader = new GLTFLoader();
 	loader.load(
-	  '/models/3dmodel.glb', // path in public/models
+	  modelUrl,
 	  (gltf) => {
 		const model = gltf.scene;
 		scene.add(model);
