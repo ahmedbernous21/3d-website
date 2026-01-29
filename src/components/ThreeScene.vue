@@ -63,7 +63,10 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		camera.lookAt(center);
 	  },
 	  undefined,
-	  (error) => console.error('Error loading GLB:', error)
+	  (error) => {
+	    console.error('Error loading GLB:', error);
+	    console.error('Requested URL:', modelUrl, '→ if this is wrong or returns HTML, check vite base and host static files');
+	  }
 	);
   
 	window.addEventListener('resize', onWindowResize);
