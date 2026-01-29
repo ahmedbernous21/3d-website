@@ -1,9 +1,16 @@
 <template>
-  <div id="app">
-    <header class="overlay-ui">
-      <h1>My 3D Experience</h1>
+  <div class="app">
+    <header class="header">
+      <div class="header-inner">
+        <h1 class="title">3D Viewer</h1>
+        <p class="subtitle">Drag to rotate · Scroll to zoom · Click a part to select</p>
+      </div>
     </header>
-    <ThreeScene />
+    <main class="main">
+      <div class="viewer-frame">
+        <ThreeScene />
+      </div>
+    </main>
   </div>
 </template>
 
@@ -12,18 +19,53 @@ import ThreeScene from './components/ThreeScene.vue';
 </script>
 
 <style>
-html, body, #app {
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-page);
+}
+.header {
+  background: var(--header-bg);
+  color: var(--header-text);
+  padding: 1rem 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+.header-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.title {
   margin: 0;
-  padding: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  opacity: 0.9;
+  font-weight: 400;
+}
+.main {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: 100%;
+  padding: 0.75rem;
+  min-height: 0;
+}
+.viewer-frame {
+  width: 100%;
+  max-width: 1600px;
   height: 100%;
-}
-#app {
-  font-family: system-ui, sans-serif;
-}
-.overlay-ui {
-  position: absolute;
-  z-index: 10;
-  color: white;
-  padding: 16px;
+  min-height: 480px;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(249, 115, 22, 0.06);
+  background: var(--viewer-bg);
+  border: 1px solid rgba(251, 146, 60, 0.2);
 }
 </style>

@@ -1,5 +1,20 @@
 <template>
-	<div ref="container" class="canvas-container"></div>
+	<div class="scene-wrapper">
+	  <div ref="container" class="canvas-container"></div>
+	  <div class="part-panel">
+	    <div v-if="hoveredPartLabel" class="part-row part-hover">
+	      <span class="part-label">Hover</span>
+	      <span class="part-value">{{ hoveredPartLabel }}</span>
+	    </div>
+	    <div v-if="selectedPartLabel" class="part-row part-selected">
+	      <span class="part-label">Selected</span>
+	      <span class="part-value">{{ selectedPartLabel }}</span>
+	    </div>
+	    <div v-if="!hoveredPartLabel && !selectedPartLabel" class="part-placeholder">
+	      Move over the model to see parts · Click to select
+	    </div>
+	  </div>
+	</div>
   </template>
   
   <script setup>
@@ -8,25 +23,45 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-  // Bundled asset URL – works in prod (avoids SPA fallback returning HTML for /models/...)
   import modelUrl from '../assets/models/3dmodel.glb?url';
 
   const container = ref(null);
+  const hoveredPartLabel = ref('');
+  const selectedPartLabel = ref('');
 
-  // Hover: raycasting + restore original colors
+  /** Map SketchUp/GLB node names to display labels. Add your part names after loading (see console). */
+  const PART_LABELS = {
+	  // 'NodeNameFromSketchUp': 'Building A',
+	  // 'AnotherGroup': 'Tower North',
+  };
+
   let scene, camera, renderer, controls, animationId;
   let raycaster, pointer, hoveredObject = null;
-  let onPointerMove, updateHover, setHoverMaterial, restoreMaterial;
+  let onPointerMove, updateHover, setHoverMaterial, restoreMaterial, onPointerClick;
   const interactiveMeshes = [];
   const originalMaterials = new Map();
-  const HOVER_COLOR = new THREE.Color(0x88ccff); // change to any hex, e.g. 0xff6600
+	const HOVER_COLOR = new THREE.Color(0xfb923c); // light orange hover
+
+  function getPartId(obj) {
+	  if (!obj) return null;
+	  const name = obj.name?.trim();
+	  if (name) return name;
+	  if (obj.parent && obj.parent !== scene) return getPartId(obj.parent);
+	  return null;
+  }
+
+  function getPartLabel(obj) {
+	  const id = getPartId(obj);
+	  if (!id) return 'Unnamed';
+	  return PART_LABELS[id] ?? id;
+  }
 
   onMounted(() => {
 	const width = window.innerWidth;
 	const height = window.innerHeight;
   
 	scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x111111);
+	scene.background = new THREE.Color(0xfef7ed); // match page cream
   
 	camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 	camera.position.set(3, 3, 6);
@@ -62,10 +97,13 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		const model = gltf.scene;
 		scene.add(model);
 
-		// Collect meshes for hover and store original materials
+		// Collect meshes and part names (from SketchUp groups/components)
+		const partNames = new Set();
 		model.traverse((child) => {
 		  if (child.isMesh) {
 		    interactiveMeshes.push(child);
+		    const id = getPartId(child);
+		    if (id) partNames.add(id);
 		    const mat = child.material;
 		    if (Array.isArray(mat)) {
 		      originalMaterials.set(child, mat.map((m) => (m.color ? m.color.clone() : null)));
@@ -74,6 +112,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		    }
 		  }
 		});
+		console.log('Part names in model (use these in PART_LABELS):', [...partNames].sort());
   
 		const box = new THREE.Box3().setFromObject(model);
 		const size = box.getSize(new THREE.Vector3()).length();
@@ -107,12 +146,18 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  const intersects = raycaster.intersectObjects(interactiveMeshes, true);
 	  const hit = intersects.length > 0 ? intersects[0].object : null;
 
+	  hoveredPartLabel.value = hit ? getPartLabel(hit) : '';
+
 	  if (hit !== hoveredObject) {
 	    if (hoveredObject) restoreMaterial(hoveredObject);
 	    hoveredObject = hit;
 	    if (hoveredObject) setHoverMaterial(hoveredObject);
 	    renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
 	  }
+	};
+
+	onPointerClick = () => {
+	  if (hoveredObject) selectedPartLabel.value = getPartLabel(hoveredObject);
 	};
 
 	setHoverMaterial = (mesh) => {
@@ -136,6 +181,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	};
 
 	renderer.domElement.addEventListener('pointermove', onPointerMove);
+	renderer.domElement.addEventListener('click', onPointerClick);
   
 	window.addEventListener('resize', onWindowResize);
 	animate();
@@ -144,6 +190,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   onBeforeUnmount(() => {
 	if (hoveredObject) restoreMaterial(hoveredObject);
 	renderer?.domElement?.removeEventListener('pointermove', onPointerMove);
+	renderer?.domElement?.removeEventListener('click', onPointerClick);
 	cancelAnimationFrame(animationId);
 	window.removeEventListener('resize', onWindowResize);
 	controls?.dispose();
@@ -167,9 +214,57 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   </script>
   
   <style scoped>
+  .scene-wrapper {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	min-height: 380px;
+  }
   .canvas-container {
-	width: 100vw;
-	height: 100vh;
+	width: 100%;
+	height: 100%;
 	overflow: hidden;
+	border-radius: 12px;
+  }
+  .part-panel {
+	position: absolute;
+	bottom: 16px;
+	left: 16px;
+	right: 16px;
+	max-width: 320px;
+	padding: 12px 16px;
+	background: var(--card-bg, rgba(255, 255, 255, 0.95));
+	border: 1px solid var(--card-border, rgba(251, 146, 60, 0.25));
+	border-radius: 10px;
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+	backdrop-filter: blur(8px);
+	pointer-events: none;
+	font-size: 0.875rem;
+  }
+  .part-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 4px 0;
+  }
+  .part-row + .part-row {
+	border-top: 1px solid rgba(251, 146, 60, 0.15);
+  }
+  .part-label {
+	color: var(--text-secondary, #7c2d12);
+	font-weight: 600;
+	min-width: 64px;
+  }
+  .part-value {
+	color: var(--text-primary, #431407);
+	font-weight: 500;
+  }
+  .part-selected .part-value {
+	color: var(--accent, #ea580c);
+  }
+  .part-placeholder {
+	color: var(--text-secondary, #7c2d12);
+	opacity: 0.85;
+	padding: 4px 0;
   }
   </style>
