@@ -42,9 +42,13 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
 
+	// Resolve relative URL against current page so it works on subpaths (e.g. /my-3d-site/)
+	const base = window.location.href.replace(/[^/]*$/, '');
+	const fullModelUrl = new URL(modelUrl, base).href;
+
 	const loader = new GLTFLoader();
 	loader.load(
-	  modelUrl,
+	  fullModelUrl,
 	  (gltf) => {
 		const model = gltf.scene;
 		scene.add(model);
@@ -65,7 +69,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  undefined,
 	  (error) => {
 	    console.error('Error loading GLB:', error);
-	    console.error('Requested URL:', modelUrl, '→ if this is wrong or returns HTML, check vite base and host static files');
+	    console.error('Requested URL:', fullModelUrl, '→ if this returns HTML, host may be serving index.html for assets');
 	  }
 	);
   
