@@ -1,6 +1,13 @@
 <template>
 	<div class="scene-wrapper">
 	  <div ref="container" class="canvas-container"></div>
+	  <div
+	    v-if="selectedPartLabel"
+	    class="label-above"
+	    :style="{ left: labelX + 'px', top: labelY + 'px' }"
+	  >
+	    {{ selectedPartLabel }}
+	  </div>
 	  <div class="part-panel">
 	    <div v-if="hoveredPartLabel" class="part-row part-hover">
 	      <span class="part-label">Hover</span>
@@ -28,6 +35,8 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const container = ref(null);
   const hoveredPartLabel = ref('');
   const selectedPartLabel = ref('');
+  const labelX = ref(0);
+  const labelY = ref(0);
 
   /** Map SketchUp/GLB node names to display labels. Add your part names after loading (see console). */
   const PART_LABELS = {
@@ -37,10 +46,18 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 
   let scene, camera, renderer, controls, animationId;
   let raycaster, pointer, hoveredObject = null;
-  let onPointerMove, updateHover, setHoverMaterial, restoreMaterial, onPointerClick;
+  let selectedPartId = null;
+	let onPointerMove, updateHover, applyPartStates, onPointerClick, updateLabelPosition;
   const interactiveMeshes = [];
   const originalMaterials = new Map();
-	const HOVER_COLOR = new THREE.Color(0xfb923c); // light orange hover
+  const originalScales = new Map();
+  const HOVER_COLOR = new THREE.Color(0xfb923c);
+  const SELECTED_COLOR = new THREE.Color(0xea580c);
+  const SELECTED_SCALE = 1.5; // scale up when selected (by unique name)
+  const labelOffsetY = -40; // pixels above the selected part
+  const box3 = new THREE.Box3();
+  const centerWorld = new THREE.Vector3();
+  const centerNDC = new THREE.Vector3();
 
   function getPartId(obj) {
 	  if (!obj) return null;
@@ -97,13 +114,14 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		const model = gltf.scene;
 		scene.add(model);
 
-		// Collect meshes and part names (from SketchUp groups/components)
+		// Collect meshes, part names, original materials and scales
 		const partNames = new Set();
 		model.traverse((child) => {
 		  if (child.isMesh) {
 		    interactiveMeshes.push(child);
 		    const id = getPartId(child);
 		    if (id) partNames.add(id);
+		    originalScales.set(child, child.scale.clone());
 		    const mat = child.material;
 		    if (Array.isArray(mat)) {
 		      originalMaterials.set(child, mat.map((m) => (m.color ? m.color.clone() : null)));
@@ -146,38 +164,69 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  const intersects = raycaster.intersectObjects(interactiveMeshes, true);
 	  const hit = intersects.length > 0 ? intersects[0].object : null;
 
+	  hoveredObject = hit;
 	  hoveredPartLabel.value = hit ? getPartLabel(hit) : '';
-
-	  if (hit !== hoveredObject) {
-	    if (hoveredObject) restoreMaterial(hoveredObject);
-	    hoveredObject = hit;
-	    if (hoveredObject) setHoverMaterial(hoveredObject);
-	    renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
-	  }
+	  renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
 	};
 
 	onPointerClick = () => {
-	  if (hoveredObject) selectedPartLabel.value = getPartLabel(hoveredObject);
-	};
-
-	setHoverMaterial = (mesh) => {
-	  const mat = mesh.material;
-	  if (Array.isArray(mat)) {
-	    mat.forEach((m) => { if (m.color) m.color.copy(HOVER_COLOR); });
-	  } else if (mat && mat.color) {
-	    mat.color.copy(HOVER_COLOR);
+	  if (!hoveredObject) return;
+	  const id = getPartId(hoveredObject);
+	  if (id === selectedPartId) {
+	    selectedPartId = null;
+	    selectedPartLabel.value = '';
+	  } else {
+	    selectedPartId = id;
+	    selectedPartLabel.value = getPartLabel(hoveredObject);
 	  }
 	};
 
-	restoreMaterial = (mesh) => {
+	function setMeshColor(mesh, color) {
+	  const mat = mesh.material;
+	  if (Array.isArray(mat)) mat.forEach((m) => { if (m.color) m.color.copy(color); });
+	  else if (mat && mat.color) mat.color.copy(color);
+	}
+
+	function restoreMeshMaterial(mesh) {
 	  const orig = originalMaterials.get(mesh);
 	  if (!orig) return;
 	  const mat = mesh.material;
 	  if (Array.isArray(mat) && Array.isArray(orig)) {
 	    mat.forEach((m, i) => { if (m.color && orig[i]) m.color.copy(orig[i]); });
-	  } else if (mat && mat.color && orig && orig.clone) {
-	    mat.color.copy(orig);
+	  } else if (mat && mat.color && orig && orig.clone) mat.color.copy(orig);
+	}
+
+	applyPartStates = () => {
+	  if (interactiveMeshes.length === 0) return;
+	  const hoveredId = hoveredObject ? getPartId(hoveredObject) : null;
+	  for (const mesh of interactiveMeshes) {
+	    const id = getPartId(mesh);
+	    const baseScale = originalScales.get(mesh);
+	    if (!baseScale) continue;
+	    if (id === selectedPartId) {
+	      setMeshColor(mesh, SELECTED_COLOR);
+	      mesh.scale.copy(baseScale).multiplyScalar(SELECTED_SCALE);
+	    } else if (id === hoveredId) {
+	      setMeshColor(mesh, HOVER_COLOR);
+	      mesh.scale.copy(baseScale);
+	    } else {
+	      restoreMeshMaterial(mesh);
+	      mesh.scale.copy(baseScale);
+	    }
 	  }
+	};
+
+	updateLabelPosition = () => {
+	  if (!selectedPartId || !container.value) return;
+	  const meshes = interactiveMeshes.filter((m) => getPartId(m) === selectedPartId);
+	  if (meshes.length === 0) return;
+	  box3.makeEmpty();
+	  for (const m of meshes) box3.expandByObject(m);
+	  box3.getCenter(centerWorld);
+	  centerNDC.copy(centerWorld).project(camera);
+	  const rect = renderer.domElement.getBoundingClientRect();
+	  labelX.value = ((centerNDC.x + 1) / 2) * rect.width;
+	  labelY.value = ((1 - centerNDC.y) / 2) * rect.height + labelOffsetY;
 	};
 
 	renderer.domElement.addEventListener('pointermove', onPointerMove);
@@ -188,7 +237,9 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   });
   
   onBeforeUnmount(() => {
-	if (hoveredObject) restoreMaterial(hoveredObject);
+	selectedPartId = null;
+	hoveredObject = null;
+	applyPartStates?.();
 	renderer?.domElement?.removeEventListener('pointermove', onPointerMove);
 	renderer?.domElement?.removeEventListener('click', onPointerClick);
 	cancelAnimationFrame(animationId);
@@ -208,6 +259,8 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   function animate() {
 	animationId = requestAnimationFrame(animate);
 	updateHover();
+	applyPartStates();
+	updateLabelPosition();
 	controls.update();
 	renderer.render(scene, camera);
   }
@@ -225,6 +278,21 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	height: 100%;
 	overflow: hidden;
 	border-radius: 12px;
+  }
+  .label-above {
+	position: absolute;
+	transform: translate(-50%, -100%);
+	padding: 6px 14px;
+	background: var(--card-bg, rgba(255, 255, 255, 0.98));
+	border: 1px solid var(--accent, #ea580c);
+	border-radius: 8px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+	color: var(--text-primary, #431407);
+	font-size: 0.9rem;
+	font-weight: 600;
+	white-space: nowrap;
+	pointer-events: none;
+	z-index: 5;
   }
   .part-panel {
 	position: absolute;
