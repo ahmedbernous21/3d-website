@@ -12,9 +12,15 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   import modelUrl from '../assets/models/3dmodel.glb?url';
 
   const container = ref(null);
-  
+
+  // Hover: raycasting + restore original colors
   let scene, camera, renderer, controls, animationId;
-  
+  let raycaster, pointer, hoveredObject = null;
+  let onPointerMove, updateHover, setHoverMaterial, restoreMaterial;
+  const interactiveMeshes = [];
+  const originalMaterials = new Map();
+  const HOVER_COLOR = new THREE.Color(0x88ccff); // change to any hex, e.g. 0xff6600
+
   onMounted(() => {
 	const width = window.innerWidth;
 	const height = window.innerHeight;
@@ -30,6 +36,9 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   
 	container.value.appendChild(renderer.domElement);
+
+	raycaster = new THREE.Raycaster();
+	pointer = new THREE.Vector2();
   
 	const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
 	hemiLight.position.set(0, 10, 0);
@@ -52,6 +61,19 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  (gltf) => {
 		const model = gltf.scene;
 		scene.add(model);
+
+		// Collect meshes for hover and store original materials
+		model.traverse((child) => {
+		  if (child.isMesh) {
+		    interactiveMeshes.push(child);
+		    const mat = child.material;
+		    if (Array.isArray(mat)) {
+		      originalMaterials.set(child, mat.map((m) => (m.color ? m.color.clone() : null)));
+		    } else if (mat && mat.color) {
+		      originalMaterials.set(child, mat.color.clone());
+		    }
+		  }
+		});
   
 		const box = new THREE.Box3().setFromObject(model);
 		const size = box.getSize(new THREE.Vector3()).length();
@@ -72,12 +94,56 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	    console.error('Requested URL:', fullModelUrl, '→ if this returns HTML, host may be serving index.html for assets');
 	  }
 	);
+
+	onPointerMove = (event) => {
+	  const rect = renderer.domElement.getBoundingClientRect();
+	  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+	  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+	};
+
+	updateHover = () => {
+	  if (interactiveMeshes.length === 0) return;
+	  raycaster.setFromCamera(pointer, camera);
+	  const intersects = raycaster.intersectObjects(interactiveMeshes, true);
+	  const hit = intersects.length > 0 ? intersects[0].object : null;
+
+	  if (hit !== hoveredObject) {
+	    if (hoveredObject) restoreMaterial(hoveredObject);
+	    hoveredObject = hit;
+	    if (hoveredObject) setHoverMaterial(hoveredObject);
+	    renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
+	  }
+	};
+
+	setHoverMaterial = (mesh) => {
+	  const mat = mesh.material;
+	  if (Array.isArray(mat)) {
+	    mat.forEach((m) => { if (m.color) m.color.copy(HOVER_COLOR); });
+	  } else if (mat && mat.color) {
+	    mat.color.copy(HOVER_COLOR);
+	  }
+	};
+
+	restoreMaterial = (mesh) => {
+	  const orig = originalMaterials.get(mesh);
+	  if (!orig) return;
+	  const mat = mesh.material;
+	  if (Array.isArray(mat) && Array.isArray(orig)) {
+	    mat.forEach((m, i) => { if (m.color && orig[i]) m.color.copy(orig[i]); });
+	  } else if (mat && mat.color && orig && orig.clone) {
+	    mat.color.copy(orig);
+	  }
+	};
+
+	renderer.domElement.addEventListener('pointermove', onPointerMove);
   
 	window.addEventListener('resize', onWindowResize);
 	animate();
   });
   
   onBeforeUnmount(() => {
+	if (hoveredObject) restoreMaterial(hoveredObject);
+	renderer?.domElement?.removeEventListener('pointermove', onPointerMove);
 	cancelAnimationFrame(animationId);
 	window.removeEventListener('resize', onWindowResize);
 	controls?.dispose();
@@ -94,6 +160,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   
   function animate() {
 	animationId = requestAnimationFrame(animate);
+	updateHover();
 	controls.update();
 	renderer.render(scene, camera);
   }
