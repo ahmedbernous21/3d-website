@@ -58,27 +58,47 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const box3 = new THREE.Box3();
   const centerWorld = new THREE.Vector3();
   const centerNDC = new THREE.Vector3();
+  const AUTO_ROTATE_SPEED = 0.01;
+  let rotateGroupRef = null;
 
+  /** Part = each component alone (mesh uuid), not grouped by SketchUp group. */
   function getPartId(obj) {
-	  if (!obj) return null;
+	  return obj?.uuid ?? null;
+  }
+
+  function getDisplayName(obj) {
+	  if (!obj) return 'Unnamed';
 	  const name = obj.name?.trim();
 	  if (name) return name;
-	  if (obj.parent && obj.parent !== scene) return getPartId(obj.parent);
-	  return null;
+	  let current = obj.parent;
+	  while (current && current !== scene) {
+	    const n = current.name?.trim();
+	    if (n) return n;
+	    current = current.parent;
+	  }
+	  return 'Unnamed';
   }
 
   function getPartLabel(obj) {
-	  const id = getPartId(obj);
-	  if (!id) return 'Unnamed';
-	  return PART_LABELS[id] ?? id;
+	  const name = getDisplayName(obj);
+	  return PART_LABELS[name] ?? name;
+  }
+
+  function getContainerSize() {
+	const rect = container.value?.getBoundingClientRect();
+	const w = rect?.width ?? 0;
+	const h = rect?.height ?? 0;
+	return {
+	  width: w > 0 ? w : window.innerWidth,
+	  height: h > 0 ? h : window.innerHeight,
+	};
   }
 
   onMounted(() => {
-	const width = window.innerWidth;
-	const height = window.innerHeight;
+	const { width, height } = getContainerSize();
   
 	scene = new THREE.Scene();
-	scene.background = new THREE.Color(0xfef7ed); // match page cream
+	scene.background = new THREE.Color(0x111111); // match dark viewer section
   
 	camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 	camera.position.set(3, 3, 6);
@@ -86,19 +106,25 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	renderer = new THREE.WebGLRenderer({ antialias: true });
 	renderer.setSize(width, height);
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+	renderer.outputColorSpace = THREE.SRGBColorSpace;
+	renderer.toneMapping = THREE.ACESFilmicToneMapping;
+	renderer.toneMappingExposure = 1.35;
   
 	container.value.appendChild(renderer.domElement);
 
 	raycaster = new THREE.Raycaster();
 	pointer = new THREE.Vector2();
   
-	const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+	const hemiLight = new THREE.HemisphereLight(0xffffff, 0x888888, 1.35);
 	hemiLight.position.set(0, 10, 0);
 	scene.add(hemiLight);
   
-	const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+	const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
 	dirLight.position.set(5, 10, 7);
 	scene.add(dirLight);
+	const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+	fillLight.position.set(-4, 6, 4);
+	scene.add(fillLight);
   
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
@@ -112,7 +138,6 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  fullModelUrl,
 	  (gltf) => {
 		const model = gltf.scene;
-		scene.add(model);
 
 		// Collect meshes, part names, original materials and scales
 		const partNames = new Set();
@@ -131,19 +156,47 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		  }
 		});
 		console.log('Part names in model (use these in PART_LABELS):', [...partNames].sort());
-  
+
+		// Print structure: layers, names, grouping
+		function nodeToTree(obj, depth = 0) {
+		  const type = obj.isMesh ? 'Mesh' : (obj.isGroup ? 'Group' : 'Object3D');
+		  const name = obj.name?.trim() || '(no name)';
+		  const entry = { name, type, uuid: obj.uuid };
+		  if (obj.children && obj.children.length > 0) {
+		    entry.children = obj.children.map((c) => nodeToTree(c, depth + 1));
+		  }
+		  return entry;
+		}
+		const structure = nodeToTree(model);
+		console.log('Model structure (layers / grouping):', structure);
+		// Indented string for quick read
+		function treeToString(node, indent = '') {
+		  const type = node.type || '?';
+		  const name = node.name || '(no name)';
+		  let s = indent + `[${type}] ${name}\n`;
+		  if (node.children?.length) {
+		    node.children.forEach((c) => { s += treeToString(c, indent + '  '); });
+		  }
+		  return s;
+		}
+		console.log('Model structure (text):\n' + treeToString(structure));
+
 		const box = new THREE.Box3().setFromObject(model);
 		const size = box.getSize(new THREE.Vector3()).length();
 		const center = box.getCenter(new THREE.Vector3());
-  
-		controls.target.copy(center);
+
+		// Center the design: wrap in a group and offset model so rotation is around bounding center
+		const rotateGroup = new THREE.Group();
+		rotateGroupRef = rotateGroup;
+		model.position.sub(center);
+		rotateGroup.add(model);
+		scene.add(rotateGroup);
+
+		controls.target.set(0, 0, 0);
 		controls.update();
-  
-		camera.position.copy(center);
-		camera.position.x += size * 0.6;
-		camera.position.y += size * 0.4;
-		camera.position.z += size * 0.6;
-		camera.lookAt(center);
+
+		camera.position.set(size * 0.6, size * 0.4, size * 0.6);
+		camera.lookAt(0, 0, 0);
 	  },
 	  undefined,
 	  (error) => {
@@ -249,8 +302,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   });
   
   function onWindowResize() {
-	const width = window.innerWidth;
-	const height = window.innerHeight;
+	const { width, height } = getContainerSize();
 	camera.aspect = width / height;
 	camera.updateProjectionMatrix();
 	renderer.setSize(width, height);
@@ -258,6 +310,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   
   function animate() {
 	animationId = requestAnimationFrame(animate);
+	if (rotateGroupRef) rotateGroupRef.rotation.y += AUTO_ROTATE_SPEED;
 	updateHover();
 	applyPartStates();
 	updateLabelPosition();
@@ -283,11 +336,11 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	position: absolute;
 	transform: translate(-50%, -100%);
 	padding: 6px 14px;
-	background: var(--card-bg, rgba(255, 255, 255, 0.98));
-	border: 1px solid var(--accent, #ea580c);
+	background: rgba(0, 0, 0, 0.75);
+	border: 1px solid rgba(255, 255, 255, 0.2);
 	border-radius: 8px;
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-	color: var(--text-primary, #431407);
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+	color: #fff;
 	font-size: 0.9rem;
 	font-weight: 600;
 	white-space: nowrap;
@@ -301,13 +354,14 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	right: 16px;
 	max-width: 320px;
 	padding: 12px 16px;
-	background: var(--card-bg, rgba(255, 255, 255, 0.95));
-	border: 1px solid var(--card-border, rgba(251, 146, 60, 0.25));
+	background: rgba(0, 0, 0, 0.6);
+	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 10px;
-	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-	backdrop-filter: blur(8px);
+	box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+	backdrop-filter: blur(12px);
 	pointer-events: none;
 	font-size: 0.875rem;
+	color: #fff;
   }
   .part-row {
 	display: flex;
@@ -316,23 +370,23 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	padding: 4px 0;
   }
   .part-row + .part-row {
-	border-top: 1px solid rgba(251, 146, 60, 0.15);
+	border-top: 1px solid rgba(255, 255, 255, 0.1);
   }
   .part-label {
-	color: var(--text-secondary, #7c2d12);
+	color: rgba(255, 255, 255, 0.6);
 	font-weight: 600;
 	min-width: 64px;
   }
   .part-value {
-	color: var(--text-primary, #431407);
+	color: #fff;
 	font-weight: 500;
   }
   .part-selected .part-value {
-	color: var(--accent, #ea580c);
+	color: #fb923c;
   }
   .part-placeholder {
-	color: var(--text-secondary, #7c2d12);
-	opacity: 0.85;
+	color: rgba(255, 255, 255, 0.6);
+	opacity: 0.9;
 	padding: 4px 0;
   }
   </style>
