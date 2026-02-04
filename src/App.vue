@@ -1,5 +1,6 @@
 <template>
   <div class="app">
+    <LaMairieDetail :open="detailViewOpen" @close="detailViewOpen = false" />
     <section class="hero" ref="heroRef">
       <div class="hero-bg"></div>
       <div class="hero-overlay"></div>
@@ -21,7 +22,7 @@
       <div class="viewer-wrapper">
         <p class="viewer-hint">Drag to rotate · Scroll to zoom · Click a part to select</p>
         <div class="viewer-frame">
-          <ThreeScene />
+          <ThreeScene @open-detail="detailViewOpen = true" />
         </div>
       </div>
     </section>
@@ -31,10 +32,12 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import ThreeScene from './components/ThreeScene.vue';
+import LaMairieDetail from './components/LaMairieDetail.vue';
 
 const heroRef = ref(null);
 const viewerRef = ref(null);
 const viewerVisible = ref(false);
+const detailViewOpen = ref(false);
 
 function scrollToViewer() {
   viewerRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -57,7 +60,7 @@ onMounted(() => {
 <style>
 .app {
   min-height: 100vh;
-  background: #0a0a0a;
+  background: linear-gradient(165deg, #ed7a0c 0%, #e07b2c 50%, #d9730a 100%);
 }
 html {
   scroll-behavior: smooth;
@@ -180,18 +183,20 @@ html {
 }
 .viewer-hint {
   text-align: center;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,255,255,0.9);
   font-size: 0.875rem;
   margin-bottom: 1rem;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.15);
 }
 .viewer-frame {
   width: 100%;
-  height: 70vh;
-  min-height: 480px;
-  border-radius: 16px;
+  height: 80vh;
+  min-height: 750px;
+  border-radius: 24px;
   overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06);
-  background: #111;
+  box-shadow: 0 20px 50px rgba(160, 70, 10, 0.25);
+  background: #fdeee0;
+  border: 6px solid #e07b2c;
   transform: scale(0.96);
   transition: transform 0.8s ease;
 }

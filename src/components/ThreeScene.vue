@@ -1,13 +1,15 @@
 <template>
 	<div class="scene-wrapper">
 	  <div ref="container" class="canvas-container"></div>
-	  <div
+	  <button
 	    v-if="selectedPartLabel"
-	    class="label-above"
+	    type="button"
+	    class="label-above label-clickable"
 	    :style="{ left: labelX + 'px', top: labelY + 'px' }"
+	    @click="onLabelClick"
 	  >
 	    {{ selectedPartLabel }}
-	  </div>
+	  </button>
 	  <div class="part-panel">
 	    <div v-if="hoveredPartLabel" class="part-row part-hover">
 	      <span class="part-label">Hover</span>
@@ -26,6 +28,8 @@
   
   <script setup>
 import { onMounted, onBeforeUnmount, ref } from 'vue';
+
+  const emit = defineEmits(['open-detail']);
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -41,8 +45,11 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   /** Map SketchUp/GLB node names to display labels. Add your part names after loading (see console). */
   const PART_LABELS = {
 	  // 'NodeNameFromSketchUp': 'Building A',
-	  // 'AnotherGroup': 'Tower North',
   };
+  /** Only this part is selectable; shown as "La mairie". No other part can be selected. */
+  const SINGLE_SELECTABLE_NAME = '3DGeom-16373';
+  const SINGLE_SELECTABLE_DISPLAY_NAME = 'La mairie';
+  const SINGLE_SELECTABLE_ONLY = true; // if true, only 3DGeom-16373 is selectable; nothing else
 
   let scene, camera, renderer, controls, animationId;
   let raycaster, pointer, hoveredObject = null;
@@ -51,19 +58,23 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const interactiveMeshes = [];
   const originalMaterials = new Map();
   const originalScales = new Map();
+  let onlySelectableUuid = null;
+  const onlySelectableMeshes = new Set();
   const HOVER_COLOR = new THREE.Color(0xfb923c);
-  const SELECTED_COLOR = new THREE.Color(0xea580c);
-  const SELECTED_SCALE = 1.5; // scale up when selected (by unique name)
-  const labelOffsetY = -40; // pixels above the selected part
+  const SELECTED_COLOR = new THREE.Color(0xeeeeee);
+  const SELECTED_SCALE = 1.5;
+  const labelOffsetY = -40;
   const box3 = new THREE.Box3();
   const centerWorld = new THREE.Vector3();
   const centerNDC = new THREE.Vector3();
   const AUTO_ROTATE_SPEED = 0;
   let rotateGroupRef = null;
 
-  /** Part = component (parent group) that contains the mesh; all meshes in the same component share one id. */
   function getPartId(obj) {
 	  if (!obj) return null;
+	  if (SINGLE_SELECTABLE_ONLY) {
+	    return onlySelectableMeshes.has(obj) ? onlySelectableUuid : null;
+	  }
 	  const parent = obj.parent;
 	  if (parent && parent !== scene) return parent.uuid;
 	  return obj.uuid;
@@ -83,8 +94,16 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   }
 
   function getPartLabel(obj) {
+	  const id = getPartId(obj);
+	  if (id === onlySelectableUuid) return SINGLE_SELECTABLE_DISPLAY_NAME;
 	  const name = getDisplayName(obj);
 	  return PART_LABELS[name] ?? name;
+  }
+
+  function onLabelClick() {
+	  if (selectedPartLabel.value === SINGLE_SELECTABLE_DISPLAY_NAME) {
+	    emit('open-detail');
+	  }
   }
 
   function getContainerSize() {
@@ -101,7 +120,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	const { width, height } = getContainerSize();
   
 	scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x111111); // match dark viewer section
+	scene.background = new THREE.Color(0xfdeee0); /* warm cream-orange, blends with frame */
   
 	camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 	camera.position.set(3, 3, 6);
@@ -111,23 +130,26 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 	renderer.outputColorSpace = THREE.SRGBColorSpace;
 	renderer.toneMapping = THREE.ACESFilmicToneMapping;
-	renderer.toneMappingExposure = 1.35;
+	renderer.toneMappingExposure = 1.5;
   
 	container.value.appendChild(renderer.domElement);
 
 	raycaster = new THREE.Raycaster();
 	pointer = new THREE.Vector2();
   
-	const hemiLight = new THREE.HemisphereLight(0xffffff, 0x888888, 1.35);
+	const hemiLight = new THREE.HemisphereLight(0xffffff, 0xbbbbbb, 1.5);
 	hemiLight.position.set(0, 10, 0);
 	scene.add(hemiLight);
   
-	const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+	const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
 	dirLight.position.set(5, 10, 7);
 	scene.add(dirLight);
-	const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+	const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
 	fillLight.position.set(-4, 6, 4);
 	scene.add(fillLight);
+	const backLight = new THREE.DirectionalLight(0xffffff, 0.35);
+	backLight.position.set(0, 5, -5);
+	scene.add(backLight);
   
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
@@ -142,13 +164,11 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  (gltf) => {
 		const model = gltf.scene;
 
-		// Collect meshes, part names, original materials and scales
+		// Collect meshes, original materials and scales
 		const partNames = new Set();
 		model.traverse((child) => {
 		  if (child.isMesh) {
 		    interactiveMeshes.push(child);
-		    const id = getPartId(child);
-		    if (id) partNames.add(id);
 		    originalScales.set(child, child.scale.clone());
 		    const mat = child.material;
 		    if (Array.isArray(mat)) {
@@ -158,7 +178,27 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		    }
 		  }
 		});
-		console.log('Part names in model (use these in PART_LABELS):', [...partNames].sort());
+
+		// If "3DGeom-16373" exists, make it the only selectable part and display as "La mairie"
+		onlySelectableUuid = null;
+		onlySelectableMeshes.clear();
+		let targetNode = null;
+		model.traverse((node) => {
+		  if (node.name?.trim() === SINGLE_SELECTABLE_NAME) {
+		    targetNode = node;
+		  }
+		});
+		if (targetNode) {
+		  onlySelectableUuid = targetNode.uuid;
+		  if (targetNode.isMesh) {
+		    onlySelectableMeshes.add(targetNode);
+		  } else {
+		    targetNode.traverse((c) => { if (c.isMesh) onlySelectableMeshes.add(c); });
+		  }
+		  console.log('Only selectable part:', SINGLE_SELECTABLE_DISPLAY_NAME, '(from', SINGLE_SELECTABLE_NAME + '), meshes:', onlySelectableMeshes.size);
+		} else {
+		  console.warn('Single-selectable mode: "' + SINGLE_SELECTABLE_NAME + '" not found in model. Nothing is selectable. Check model structure / names.');
+		}
 
 		// Print structure: layers, names, grouping
 		function nodeToTree(obj, depth = 0) {
@@ -218,8 +258,10 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  if (interactiveMeshes.length === 0) return;
 	  raycaster.setFromCamera(pointer, camera);
 	  const intersects = raycaster.intersectObjects(interactiveMeshes, true);
-	  const hit = intersects.length > 0 ? intersects[0].object : null;
-
+	  let hit = intersects.length > 0 ? intersects[0].object : null;
+	  if (SINGLE_SELECTABLE_ONLY && hit && !onlySelectableMeshes.has(hit)) {
+	    hit = null;
+	  }
 	  hoveredObject = hit;
 	  hoveredPartLabel.value = hit ? getPartLabel(hit) : '';
 	  renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
@@ -259,10 +301,10 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	    const id = getPartId(mesh);
 	    const baseScale = originalScales.get(mesh);
 	    if (!baseScale) continue;
-	    if (id === selectedPartId) {
+	    if (id != null && id === selectedPartId) {
 	      setMeshColor(mesh, SELECTED_COLOR);
 	      mesh.scale.copy(baseScale).multiplyScalar(SELECTED_SCALE);
-	    } else if (id === hoveredId) {
+	    } else if (hoveredId != null && id === hoveredId) {
 	      setMeshColor(mesh, HOVER_COLOR);
 	      mesh.scale.copy(baseScale);
 	    } else {
@@ -333,22 +375,32 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	width: 100%;
 	height: 100%;
 	overflow: hidden;
-	border-radius: 12px;
+	border-radius: 18px;
+	box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   }
   .label-above {
 	position: absolute;
 	transform: translate(-50%, -100%);
 	padding: 6px 14px;
-	background: rgba(0, 0, 0, 0.75);
-	border: 1px solid rgba(255, 255, 255, 0.2);
-	border-radius: 8px;
-	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+	background: rgba(224, 123, 44, 0.92);
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 10px;
+	box-shadow: 0 4px 16px rgba(160, 70, 10, 0.25);
 	color: #fff;
 	font-size: 0.9rem;
 	font-weight: 600;
 	white-space: nowrap;
-	pointer-events: none;
 	z-index: 5;
+	font-family: inherit;
+	cursor: default;
+  }
+  .label-clickable {
+	pointer-events: auto;
+	cursor: pointer;
+  }
+  .label-clickable:hover {
+	background: rgba(237, 122, 12, 0.95);
+	border-color: rgba(255, 255, 255, 0.4);
   }
   .part-panel {
 	position: absolute;
@@ -356,12 +408,12 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	left: 16px;
 	right: 16px;
 	max-width: 320px;
-	padding: 12px 16px;
-	background: rgba(0, 0, 0, 0.6);
-	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 10px;
-	box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-	backdrop-filter: blur(12px);
+	padding: 14px 18px;
+	background: rgba(224, 123, 44, 0.28);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 14px;
+	box-shadow: 0 8px 32px rgba(160, 70, 10, 0.2);
+	backdrop-filter: blur(14px);
 	pointer-events: none;
 	font-size: 0.875rem;
 	color: #fff;
@@ -373,10 +425,10 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	padding: 4px 0;
   }
   .part-row + .part-row {
-	border-top: 1px solid rgba(255, 255, 255, 0.1);
+	border-top: 1px solid rgba(255, 255, 255, 0.15);
   }
   .part-label {
-	color: rgba(255, 255, 255, 0.6);
+	color: rgba(255, 255, 255, 0.85);
 	font-weight: 600;
 	min-width: 64px;
   }
@@ -385,11 +437,11 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	font-weight: 500;
   }
   .part-selected .part-value {
-	color: #fb923c;
+	color: #fff8f0;
   }
   .part-placeholder {
-	color: rgba(255, 255, 255, 0.6);
-	opacity: 0.9;
+	color: rgba(255, 255, 255, 0.85);
+	opacity: 0.95;
 	padding: 4px 0;
   }
   </style>
