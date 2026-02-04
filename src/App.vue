@@ -5,7 +5,7 @@
       <div class="hero-bg"></div>
       <div class="hero-overlay"></div>
       <div class="hero-content">
-        <h1 class="hero-title">Ready to explore Borj El Abhri Centre</h1>
+        <h1 class="hero-title">Ready to explore Borj El Bahri Centre</h1>
         <p class="hero-subtitle">Step inside the 3D — discover every detail of your space</p>
         <button class="hero-cta" @click="scrollToViewer">
           Get Started
