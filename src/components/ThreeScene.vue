@@ -58,12 +58,15 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const box3 = new THREE.Box3();
   const centerWorld = new THREE.Vector3();
   const centerNDC = new THREE.Vector3();
-  const AUTO_ROTATE_SPEED = 0.01;
+  const AUTO_ROTATE_SPEED = 0;
   let rotateGroupRef = null;
 
-  /** Part = each component alone (mesh uuid), not grouped by SketchUp group. */
+  /** Part = component (parent group) that contains the mesh; all meshes in the same component share one id. */
   function getPartId(obj) {
-	  return obj?.uuid ?? null;
+	  if (!obj) return null;
+	  const parent = obj.parent;
+	  if (parent && parent !== scene) return parent.uuid;
+	  return obj.uuid;
   }
 
   function getDisplayName(obj) {
