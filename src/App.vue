@@ -1,11 +1,11 @@
 <template>
   <div class="app">
-    <LaMairieDetail :open="detailViewOpen" @close="detailViewOpen = false" />
+    <BuildingDetail :open="detailViewOpen" :slug="detailSlug" @close="closeDetail" />
     <section class="hero" ref="heroRef">
       <div class="hero-bg"></div>
       <div class="hero-overlay"></div>
       <div class="hero-content">
-        <h1 class="hero-title">Ready to explore Borj El Bahri Centre</h1>
+        <h1 class="hero-title">Ready to explore Bordj El Bahri Centre</h1>
         <p class="hero-subtitle">Step inside the 3D — discover every detail of your space</p>
         <button class="hero-cta" @click="scrollToViewer">
           Get Started
@@ -22,7 +22,7 @@
       <div class="viewer-wrapper">
         <p class="viewer-hint">Drag to rotate · Scroll to zoom · Click a part to select</p>
         <div class="viewer-frame">
-          <ThreeScene @open-detail="detailViewOpen = true" />
+          <ThreeScene @open-detail="openDetail" />
         </div>
       </div>
     </section>
@@ -32,12 +32,21 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import ThreeScene from './components/ThreeScene.vue';
-import LaMairieDetail from './components/LaMairieDetail.vue';
+import BuildingDetail from './components/BuildingDetail.vue';
 
 const heroRef = ref(null);
 const viewerRef = ref(null);
 const viewerVisible = ref(false);
 const detailViewOpen = ref(false);
+const detailSlug = ref('la-mairie');
+
+function openDetail(slug) {
+  detailSlug.value = slug || 'la-mairie';
+  detailViewOpen.value = true;
+}
+function closeDetail() {
+  detailViewOpen.value = false;
+}
 
 function scrollToViewer() {
   viewerRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });

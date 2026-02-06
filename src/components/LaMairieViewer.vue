@@ -8,6 +8,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
+const props = defineProps({
+  modelFile: { type: String, default: 'la_mairie.glb' },
+});
+
 const container = ref(null);
 let scene, camera, renderer, controls, animationId;
 
@@ -60,7 +64,8 @@ onMounted(() => {
   controls.enableDamping = true;
 
   const base = window.location.href.replace(/[^/]*$/, '');
-  const url = new URL('/models/la_mairie.glb', base).href;
+  const modelPath = '/models/' + (props.modelFile || 'la_mairie.glb').replace(/^\/?models\//, '');
+  const url = new URL(modelPath, base).href;
   const loader = new GLTFLoader();
   loader.load(
     url,
@@ -75,7 +80,7 @@ onMounted(() => {
       camera.lookAt(center);
     },
     undefined,
-    (e) => console.error('Error loading la_mairie.glb:', e)
+    (e) => console.error('Error loading', modelPath, e)
   );
 
   window.addEventListener('resize', onWindowResize);

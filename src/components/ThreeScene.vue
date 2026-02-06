@@ -42,14 +42,12 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const labelX = ref(0);
   const labelY = ref(0);
 
-  /** Map SketchUp/GLB node names to display labels. Add your part names after loading (see console). */
-  const PART_LABELS = {
-	  // 'NodeNameFromSketchUp': 'Building A',
-  };
-  /** Only this part is selectable; shown as "La mairie". No other part can be selected. */
-  const SINGLE_SELECTABLE_NAME = '3DGeom-16373';
-  const SINGLE_SELECTABLE_DISPLAY_NAME = 'La mairie';
-  const SINGLE_SELECTABLE_ONLY = true; // if true, only 3DGeom-16373 is selectable; nothing else
+  /** Selectable parts: node name in main model → display label and detail slug for modal. */
+  const SELECTABLE_PARTS = [
+	  { nodeName: '3DGeom-16373', displayName: 'La mairie', detailSlug: 'la-mairie' },
+	  { nodeName: '3DGeom-16364', displayName: 'La poste', detailSlug: 'poste' },
+	  { nodeName: '3DGeom-16423', displayName: 'Église', detailSlug: 'eglise' },
+  ];
 
   let scene, camera, renderer, controls, animationId;
   let raycaster, pointer, hoveredObject = null;
@@ -58,8 +56,10 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
   const interactiveMeshes = [];
   const originalMaterials = new Map();
   const originalScales = new Map();
-  let onlySelectableUuid = null;
-  const onlySelectableMeshes = new Set();
+  /** uuid of selectable group → { displayName, detailSlug }; mesh → group uuid for getPartId */
+  const selectableByUuid = new Map();
+  const selectableMeshes = new Set();
+  const selectablePartUuidByMesh = new Map();
   const HOVER_COLOR = new THREE.Color(0xfb923c);
   const SELECTED_COLOR = new THREE.Color(0xeeeeee);
   const SELECTED_SCALE = 1.5;
@@ -72,38 +72,25 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 
   function getPartId(obj) {
 	  if (!obj) return null;
-	  if (SINGLE_SELECTABLE_ONLY) {
-	    return onlySelectableMeshes.has(obj) ? onlySelectableUuid : null;
-	  }
-	  const parent = obj.parent;
-	  if (parent && parent !== scene) return parent.uuid;
-	  return obj.uuid;
-  }
-
-  function getDisplayName(obj) {
-	  if (!obj) return 'Unnamed';
-	  const name = obj.name?.trim();
-	  if (name) return name;
-	  let current = obj.parent;
-	  while (current && current !== scene) {
-	    const n = current.name?.trim();
-	    if (n) return n;
-	    current = current.parent;
-	  }
-	  return 'Unnamed';
+	  return selectableMeshes.has(obj) ? selectablePartUuidByMesh.get(obj) : null;
   }
 
   function getPartLabel(obj) {
 	  const id = getPartId(obj);
-	  if (id === onlySelectableUuid) return SINGLE_SELECTABLE_DISPLAY_NAME;
-	  const name = getDisplayName(obj);
-	  return PART_LABELS[name] ?? name;
+	  if (id == null) return '';
+	  const info = selectableByUuid.get(id);
+	  return info ? info.displayName : '';
+  }
+
+  function getSelectedDetailSlug() {
+	  if (selectedPartId == null) return null;
+	  const info = selectableByUuid.get(selectedPartId);
+	  return info ? info.detailSlug : null;
   }
 
   function onLabelClick() {
-	  if (selectedPartLabel.value === SINGLE_SELECTABLE_DISPLAY_NAME) {
-	    emit('open-detail');
-	  }
+	  const slug = getSelectedDetailSlug();
+	  if (slug) emit('open-detail', slug);
   }
 
   function getContainerSize() {
@@ -179,25 +166,29 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 		  }
 		});
 
-		// If "3DGeom-16373" exists, make it the only selectable part and display as "La mairie"
-		onlySelectableUuid = null;
-		onlySelectableMeshes.clear();
-		let targetNode = null;
-		model.traverse((node) => {
-		  if (node.name?.trim() === SINGLE_SELECTABLE_NAME) {
-		    targetNode = node;
-		  }
-		});
-		if (targetNode) {
-		  onlySelectableUuid = targetNode.uuid;
-		  if (targetNode.isMesh) {
-		    onlySelectableMeshes.add(targetNode);
+		// Register each SELECTABLE_PARTS node and its meshes
+		selectableByUuid.clear();
+		selectableMeshes.clear();
+		selectablePartUuidByMesh.clear();
+		for (const part of SELECTABLE_PARTS) {
+		  let targetNode = null;
+		  model.traverse((node) => {
+		    if (node.name?.trim() === part.nodeName) targetNode = node;
+		  });
+		  if (targetNode) {
+		    selectableByUuid.set(targetNode.uuid, { displayName: part.displayName, detailSlug: part.detailSlug });
+		    const addMeshes = (node) => {
+		      if (node.isMesh) {
+		        selectableMeshes.add(node);
+		        selectablePartUuidByMesh.set(node, targetNode.uuid);
+		      }
+		      node.children?.forEach(addMeshes);
+		    };
+		    addMeshes(targetNode);
+		    console.log('Selectable:', part.displayName, '(' + part.nodeName + ') →', part.detailSlug);
 		  } else {
-		    targetNode.traverse((c) => { if (c.isMesh) onlySelectableMeshes.add(c); });
+		    console.warn('Selectable part "' + part.nodeName + '" not found in model.');
 		  }
-		  console.log('Only selectable part:', SINGLE_SELECTABLE_DISPLAY_NAME, '(from', SINGLE_SELECTABLE_NAME + '), meshes:', onlySelectableMeshes.size);
-		} else {
-		  console.warn('Single-selectable mode: "' + SINGLE_SELECTABLE_NAME + '" not found in model. Nothing is selectable. Check model structure / names.');
 		}
 
 		// Print structure: layers, names, grouping
@@ -259,7 +250,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 	  raycaster.setFromCamera(pointer, camera);
 	  const intersects = raycaster.intersectObjects(interactiveMeshes, true);
 	  let hit = intersects.length > 0 ? intersects[0].object : null;
-	  if (SINGLE_SELECTABLE_ONLY && hit && !onlySelectableMeshes.has(hit)) {
+	  if (hit && !selectableMeshes.has(hit)) {
 	    hit = null;
 	  }
 	  hoveredObject = hit;
